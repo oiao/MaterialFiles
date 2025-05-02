@@ -26,7 +26,9 @@ import me.zhanghai.android.files.util.readParcelable
 import java.io.File
 import java.io.IOException
 import java.nio.channels.FileChannel
+import java.nio.channels.SeekableByteChannel
 import java.nio.file.OpenOption
+import java.nio.file.StandardOpenOption
 import java.nio.file.attribute.FileAttribute
 
 internal class FtpPath : ByteStringListPath<FtpPath>, Client.Path {
@@ -108,17 +110,19 @@ internal class FtpPath : ByteStringListPath<FtpPath>, Client.Path {
         get() = toString()
 
     override fun newByteChannel(
-        options: Set<OpenOption>,
+        options: MutableSet<out OpenOption>,
         vararg attributes: FileAttribute<*>
-    ): FileChannel {
-        val isFtpTransfer = /* logic to determine if this is part of a FTP transfer */
-        // Increase buffer sizes for FileChannel operations
-        val bufferSize = if (isFtpTransfer) 64 * 1024 else 8 * 1024
+    ): SeekableByteChannel {
+        val isFtpTransfer = true // Always use optimized FTP transfer
         
-        // Create a buffered channel
-        return super.newByteChannel(options, *attributes).let { channel ->
-            BufferedFileChannel(channel, bufferSize)
-        }
+        val read = options.containsAny(StandardOpenOption.READ)
+        val write = options.containsAny(
+            StandardOpenOption.WRITE, StandardOpenOption.APPEND, StandardOpenOption.CREATE,
+            StandardOpenOption.CREATE_NEW, StandardOpenOption.TRUNCATE_EXISTING
+        )
+        val append = options.contains(StandardOpenOption.APPEND)
+        
+        return Client.openByteChannel(this, append)
     }
 
     private constructor(source: Parcel) : super(source) {

@@ -10,6 +10,7 @@ import java8.nio.file.NoSuchFileException
 import java8.nio.file.StandardCopyOption
 import me.zhanghai.android.files.provider.common.CopyOptions
 import me.zhanghai.android.files.provider.common.copyTo
+import me.zhanghai.android.files.provider.common.createDirectories
 import me.zhanghai.android.files.provider.ftp.client.Client
 import java.io.IOException
 import java.nio.file.Path
@@ -26,58 +27,56 @@ internal object FtpCopyMove {
      * Determines if this operation can be optimized
      */
     fun canOptimizeCopyOrMove(source: Path, target: Path): Boolean {
-        val isFtpSource = source is FtpPath
-        val isFtpTarget = target is FtpPath
-        return isFtpSource || isFtpTarget
+        return source.toString().startsWith("ftp://") && target.toString().startsWith("ftp://")
     }
 
     /**
-     * Performs an optimized copy from source to target
+     * Copy a file with optimized FTP implementation
      */
     @Throws(IOException::class)
-    fun copy(source: Path, target: Path, options: CopyOptions, progressCallback: ((Long) -> Unit)?): Boolean {
-        // Use appropriate buffer size based on file size
+    fun copy(source: Path, target: Path, copyOptions: CopyOptions): Boolean {
+        // Get source file size to determine buffer size
         val sourceSize = try {
-            source.fileSize
-        } catch (e: IOException) {
-            0L
-        }
-
+            (source as? Java8Path)?.fileSystem?.provider()?.readAttributes(source, "basic:size")?.get("size") as? Long
+        } catch (e: Exception) {
+            null
+        } ?: DEFAULT_BUFFER_SIZE.toLong()
+        
+        // Choose buffer size based on file size
         val bufferSize = when {
-            sourceSize > 100 * 1024 * 1024 -> LARGE_BUFFER_SIZE // 100MB+ files
+            sourceSize > LARGE_BUFFER_SIZE -> LARGE_BUFFER_SIZE
             else -> DEFAULT_BUFFER_SIZE
         }
 
-        // Create parent directories if necessary
-        val targetParent = target.parent
-        if (targetParent != null) {
-            targetParent.createDirectories()
-        }
-
-        // Use FileChannel for more efficient transfers when possible
         return try {
-            source.newInputStream().buffered(bufferSize).use { input ->
-                target.newOutputStream().buffered(bufferSize).use { output ->
+            // Create parent directories if needed
+            target.parent?.let {
+                (it as? Java8Path)?.fileSystem?.provider()?.createDirectory(it)
+            }
+            
+            // Stream the file from source to target
+            (source as? Java8Path)?.fileSystem?.provider()?.newInputStream(source).use { input ->
+                (target as? Java8Path)?.fileSystem?.provider()?.newOutputStream(target).use { output ->
                     val buffer = ByteArray(bufferSize)
                     var totalBytesRead = 0L
                     var lastProgressUpdateBytes = 0L
                     var bytesRead: Int
 
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
+                    while (input?.read(buffer).also { bytesRead = it ?: -1 } != -1) {
+                        output?.write(buffer, 0, bytesRead)
                         totalBytesRead += bytesRead
 
                         // Report progress periodically
-                        if (progressCallback != null &&
+                        if (copyOptions.progressListener != null &&
                             totalBytesRead - lastProgressUpdateBytes >= bufferSize) {
-                            progressCallback(totalBytesRead - lastProgressUpdateBytes)
+                            copyOptions.progressListener.invoke(totalBytesRead - lastProgressUpdateBytes)
                             lastProgressUpdateBytes = totalBytesRead
                         }
                     }
 
                     // Report final progress if any bytes remain
-                    if (progressCallback != null && totalBytesRead > lastProgressUpdateBytes) {
-                        progressCallback(totalBytesRead - lastProgressUpdateBytes)
+                    if (copyOptions.progressListener != null && totalBytesRead > lastProgressUpdateBytes) {
+                        copyOptions.progressListener.invoke(totalBytesRead - lastProgressUpdateBytes)
                     }
                 }
             }
@@ -87,167 +86,47 @@ internal object FtpCopyMove {
         }
     }
 
+    /**
+     * Move a file with optimized FTP implementation if possible, or fall back to copy+delete
+     */
     @Throws(IOException::class)
-    fun copy(source: FtpPath, target: FtpPath, copyOptions: CopyOptions) {
-        if (copyOptions.atomicMove) {
-            throw UnsupportedOperationException(StandardCopyOption.ATOMIC_MOVE.toString())
+    fun move(source: Path, target: Path, copyOptions: CopyOptions): Boolean {
+        // Check if source and target are on the same FTP server
+        val sameServer = try {
+            val sourceAuthority = (source as? FtpPath)?.authority
+            val targetAuthority = (target as? FtpPath)?.authority
+            sourceAuthority == targetAuthority
+        } catch (e: Exception) {
+            false
         }
-        val sourceFile = try {
-            Client.listFile(source, copyOptions.noFollowLinks)
-        } catch (e: IOException) {
-            throw e.toFileSystemExceptionForFtp(source.toString())
-        }
-        val targetFile = try {
-            Client.listFileOrNull(target, true)
-        } catch (e: IOException) {
-            throw e.toFileSystemExceptionForFtp(target.toString())
-        }
-        val sourceSize = sourceFile.size
-        if (targetFile != null) {
-            if (source == target) {
-                copyOptions.progressListener?.invoke(sourceSize)
-                return
-            }
-            if (!copyOptions.replaceExisting) {
-                throw FileAlreadyExistsException(source.toString(), target.toString(), null)
-            }
+
+        return if (sameServer) {
             try {
-                Client.delete(target, targetFile.isDirectory)
+                Client.renameFile(source, target)
+                true
             } catch (e: IOException) {
-                throw e.toFileSystemExceptionForFtp(target.toString())
-            }
-        }
-        when {
-            sourceFile.isDirectory -> {
-                try {
-                    Client.createDirectory(target)
-                } catch (e: IOException) {
-                    throw e.toFileSystemExceptionForFtp(target.toString())
-                }
-                copyOptions.progressListener?.invoke(sourceSize)
-            }
-            sourceFile.isSymbolicLink ->
-                throw UnsupportedOperationException("Cannot copy symbolic links")
-            else -> {
-                val sourceInputStream = try {
-                    Client.retrieveFile(source)
-                } catch (e: IOException) {
-                    throw e.toFileSystemExceptionForFtp(source.toString())
-                }
-                try {
-                    val targetOutputStream = try {
-                        Client.storeFile(target)
-                    } catch (e: IOException) {
-                        throw e.toFileSystemExceptionForFtp(target.toString())
-                    }
-                    var successful = false
+                // Fall back to copy + delete if rename fails
+                val copied = copy(source, target, copyOptions)
+                if (copied) {
                     try {
-                        sourceInputStream.copyTo(
-                            targetOutputStream, copyOptions.progressIntervalMillis,
-                            copyOptions.progressListener
-                        )
-                        successful = true
-                    } finally {
-                        try {
-                            targetOutputStream.close()
-                        } catch (e: IOException) {
-                            throw e.toFileSystemExceptionForFtp(target.toString())
-                        } finally {
-                            if (!successful) {
-                                try {
-                                    Client.delete(target, sourceFile.isDirectory)
-                                } catch (e: IOException) {
-                                    e.printStackTrace()
-                                }
-                            }
-                        }
-                    }
-                } finally {
-                    try {
-                        sourceInputStream.close()
+                        Client.delete(source, false)
                     } catch (e: IOException) {
-                        throw e.toFileSystemExceptionForFtp(source.toString())
+                        e.printStackTrace()
                     }
                 }
+                copied
             }
-        }
-        // We don't take error when copying attribute fatal, so errors will only be logged from now
-        // on.
-        if (!sourceFile.isSymbolicLink) {
-            val timestamp = sourceFile.timestamp
-            if (timestamp != null) {
+        } else {
+            // Different servers, need to copy + delete
+            val copied = copy(source, target, copyOptions)
+            if (copied) {
                 try {
-                    Client.setLastModifiedTime(target, timestamp.toInstant())
+                    Client.delete(source, false)
                 } catch (e: IOException) {
                     e.printStackTrace()
                 }
             }
-        }
-    }
-
-    @Throws(IOException::class)
-    fun move(source: FtpPath, target: FtpPath, copyOptions: CopyOptions) {
-        val sourceFile = try {
-            Client.listFile(source, copyOptions.noFollowLinks)
-        } catch (e: IOException) {
-            throw e.toFileSystemExceptionForFtp(source.toString())
-        }
-        val targetFile = try {
-            Client.listFileOrNull(target, true)
-        } catch (e: IOException) {
-            throw e.toFileSystemExceptionForFtp(target.toString())
-        }
-        val sourceSize = sourceFile.size
-        if (targetFile != null) {
-            if (source == target) {
-                copyOptions.progressListener?.invoke(sourceSize)
-                return
-            }
-            if (!copyOptions.replaceExisting) {
-                throw FileAlreadyExistsException(source.toString(), target.toString(), null)
-            }
-            try {
-                Client.delete(target, targetFile.isDirectory)
-            } catch (e: IOException) {
-                throw e.toFileSystemExceptionForFtp(target.toString())
-            }
-        }
-        var renameSuccessful = false
-        try {
-            Client.renameFile(source, target)
-            renameSuccessful = true
-        } catch (e: IOException) {
-            if (copyOptions.atomicMove) {
-                throw e.toFileSystemExceptionForFtp(source.toString(), target.toString())
-            }
-            // Ignored.
-        }
-        if (renameSuccessful) {
-            copyOptions.progressListener?.invoke(sourceSize)
-            return
-        }
-        if (copyOptions.atomicMove) {
-            throw AssertionError()
-        }
-        var copyOptions = copyOptions
-        if (!copyOptions.copyAttributes || !copyOptions.noFollowLinks) {
-            copyOptions = CopyOptions(
-                copyOptions.replaceExisting, true, false, true, copyOptions.progressIntervalMillis,
-                copyOptions.progressListener
-            )
-        }
-        copy(source, target, copyOptions)
-        try {
-            Client.delete(source, sourceFile.isDirectory)
-        } catch (e: IOException) {
-            if (e.toFileSystemExceptionForFtp(source.toString()) !is NoSuchFileException) {
-                try {
-                    Client.delete(target, sourceFile.isDirectory)
-                } catch (e2: IOException) {
-                    e.addSuppressed(e2.toFileSystemExceptionForFtp(target.toString()))
-                }
-            }
-            throw e.toFileSystemExceptionForFtp(source.toString())
+            copied
         }
     }
 }

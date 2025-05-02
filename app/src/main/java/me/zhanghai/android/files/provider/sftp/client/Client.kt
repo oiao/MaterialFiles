@@ -92,7 +92,7 @@ object Client {
         val client = SSHClient()
         
         // Configure client for optimal performance
-        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS
+        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS.toInt()
         client.socket.soTimeout = CONNECTION_TIMEOUT_MILLIS.toInt()
         
         // Enable compression for better performance
@@ -104,8 +104,8 @@ object Client {
         client.socket.tcpNoDelay = true
         
         // Set timeout so we don't hang
-        client.setTimeout(CONNECTION_TIMEOUT_MILLIS)
-        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS
+        client.timeout = CONNECTION_TIMEOUT_MILLIS.toInt()
+        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS.toInt()
         
         // Configure preferred faster ciphers
         client.config.preferredCiphers = listOf(
@@ -118,7 +118,7 @@ object Client {
             if (!client.isAuthenticated) {
                 throw UserAuthException("Authentication failed for $authority")
             }
-            client.timeout = (authority.connectTimeout ?: CONNECTION_TIMEOUT_MILLIS).toInt()
+            client.timeout = authority.connectTimeout?.toInt() ?: CONNECTION_TIMEOUT_MILLIS.toInt()
             // Optimize SFTP configuration for better performance
             val sftpClient = client.newSFTPClient()
             sftpClient.sftpEngine.packetSize = SFTP_BUFFER_SIZE
