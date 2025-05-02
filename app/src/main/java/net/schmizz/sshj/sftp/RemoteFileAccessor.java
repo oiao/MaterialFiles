@@ -14,10 +14,15 @@ import androidx.annotation.NonNull;
 public class RemoteFileAccessor {
     private RemoteFileAccessor() {}
 
+    // Increased buffer size for better network throughput
+    private static final int BUFFER_SIZE = 65536; // 64KB buffer for better performance
+
     @NonNull
     public static Promise<Response, SFTPException> asyncRead(@NonNull RemoteFile file, long offset,
                                                              int length) throws IOException {
-        return file.asyncRead(offset, length);
+        // Use our optimized buffer size if length is larger
+        int optimalLength = Math.min(length, BUFFER_SIZE);
+        return file.asyncRead(offset, optimalLength);
     }
 
     @NonNull
