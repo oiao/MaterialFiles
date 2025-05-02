@@ -84,6 +84,12 @@ object Client {
             // This has to be set before connect().
             controlEncoding = authority.encoding
             listHiddenFiles = true
+            
+            // Performance optimizations
+            bufferSize = 1024 * 1024 // 1MB buffer for improved transfer speed
+            sendBufferSize = 256 * 1024 // 256KB TCP send buffer
+            receiveBufferSize = 256 * 1024 // 256KB TCP receive buffer
+            
             connect(authority.host, authority.port)
             try {
                 if (!FTPReply.isPositiveCompletion(replyCode)) {
@@ -109,6 +115,11 @@ object Client {
                 if (!setFileType(FTPClient.BINARY_FILE_TYPE)) {
                     throwNegativeReplyCodeException()
                 }
+                
+                // Enable keep-alives to maintain connection stability
+                controlKeepAliveTimeout = 30 // seconds
+                controlKeepAliveReplyTimeout = 30 // seconds
+                
             } catch (t: Throwable) {
                 closeClient(this)
                 throw t
