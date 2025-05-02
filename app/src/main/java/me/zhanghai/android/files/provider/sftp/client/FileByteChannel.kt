@@ -27,9 +27,16 @@ class FileByteChannel(
     private val file: RemoteFile,
     isAppend: Boolean
 ) : AbstractFileByteChannel(isAppend) {
+    companion object {
+        // Optimizing read performance with larger buffer size
+        private const val OPTIMAL_READ_SIZE = 131072 // 128KB for better network performance
+    }
+
     override fun onReadAsync(position: Long, size: Int, timeoutMillis: Long): Future<ByteBuffer> =
         try {
-            RemoteFileAccessor.asyncRead(file, position, size)
+            // Use an optimal read size that's up to 128KB
+            val optimizedSize = Math.min(size, OPTIMAL_READ_SIZE)
+            RemoteFileAccessor.asyncRead(file, position, optimizedSize)
         } catch (e: IOException) {
             throw e.maybeToSpecificException()
         }

@@ -22,16 +22,23 @@ class FileByteChannel(
 ) : AbstractFileByteChannel(isAppend, joinCancelledRead = true) {
     private val clientLock = Any()
 
+    companion object {
+        // Optimized buffer sizes for FTP transfers
+        private const val OPTIMAL_READ_SIZE = 262144 // 256KB
+        private const val OPTIMAL_WRITE_SIZE = 262144 // 256KB
+    }
+
     @Throws(IOException::class)
     override fun onRead(position: Long, size: Int): ByteBuffer {
-        val destination = ByteBuffer.allocate(size)
+        val optimizedSize = Math.min(size, OPTIMAL_READ_SIZE)
+        val destination = ByteBuffer.allocate(optimizedSize)
         synchronized(clientLock) {
             client.restartOffset = position
             val inputStream = client.retrieveFileStream(path)
                 ?: client.throwNegativeReplyCodeException()
             try {
                 val limit = inputStream.use {
-                    it.readFully(destination.array(), destination.arrayOffset(), size)
+                    it.readFully(destination.array(), destination.arrayOffset(), optimizedSize)
                 }
                 destination.limit(limit)
             } finally {
