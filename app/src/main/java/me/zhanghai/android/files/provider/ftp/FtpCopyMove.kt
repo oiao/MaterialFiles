@@ -12,8 +12,81 @@ import me.zhanghai.android.files.provider.common.CopyOptions
 import me.zhanghai.android.files.provider.common.copyTo
 import me.zhanghai.android.files.provider.ftp.client.Client
 import java.io.IOException
+import java.nio.file.Path
 
+/**
+ * Provides optimized copy/move operations for FTP paths
+ */
 internal object FtpCopyMove {
+
+    private const val LARGE_BUFFER_SIZE = 8 * 1024 * 1024 // 8MB buffer for large files
+    private const val DEFAULT_BUFFER_SIZE = 64 * 1024 // 64KB for normal transfers
+
+    /**
+     * Determines if this operation can be optimized
+     */
+    fun canOptimizeCopyOrMove(source: Path, target: Path): Boolean {
+        val isFtpSource = source is FtpPath
+        val isFtpTarget = target is FtpPath
+        return isFtpSource || isFtpTarget
+    }
+
+    /**
+     * Performs an optimized copy from source to target
+     */
+    @Throws(IOException::class)
+    fun copy(source: Path, target: Path, options: CopyOptions, progressCallback: ((Long) -> Unit)?): Boolean {
+        // Use appropriate buffer size based on file size
+        val sourceSize = try {
+            source.fileSize
+        } catch (e: IOException) {
+            0L
+        }
+
+        val bufferSize = when {
+            sourceSize > 100 * 1024 * 1024 -> LARGE_BUFFER_SIZE // 100MB+ files
+            else -> DEFAULT_BUFFER_SIZE
+        }
+
+        // Create parent directories if necessary
+        val targetParent = target.parent
+        if (targetParent != null) {
+            targetParent.createDirectories()
+        }
+
+        // Use FileChannel for more efficient transfers when possible
+        return try {
+            source.newInputStream().buffered(bufferSize).use { input ->
+                target.newOutputStream().buffered(bufferSize).use { output ->
+                    val buffer = ByteArray(bufferSize)
+                    var totalBytesRead = 0L
+                    var lastProgressUpdateBytes = 0L
+                    var bytesRead: Int
+
+                    while (input.read(buffer).also { bytesRead = it } != -1) {
+                        output.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+
+                        // Report progress periodically
+                        if (progressCallback != null &&
+                            totalBytesRead - lastProgressUpdateBytes >= bufferSize) {
+                            progressCallback(totalBytesRead - lastProgressUpdateBytes)
+                            lastProgressUpdateBytes = totalBytesRead
+                        }
+                    }
+
+                    // Report final progress if any bytes remain
+                    if (progressCallback != null && totalBytesRead > lastProgressUpdateBytes) {
+                        progressCallback(totalBytesRead - lastProgressUpdateBytes)
+                    }
+                }
+            }
+            true
+        } catch (e: IOException) {
+            false
+        }
+    }
+
     @Throws(IOException::class)
     fun copy(source: FtpPath, target: FtpPath, copyOptions: CopyOptions) {
         if (copyOptions.atomicMove) {

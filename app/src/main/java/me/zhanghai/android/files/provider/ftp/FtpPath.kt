@@ -25,6 +25,9 @@ import me.zhanghai.android.files.provider.ftp.client.Client
 import me.zhanghai.android.files.util.readParcelable
 import java.io.File
 import java.io.IOException
+import java.nio.channels.FileChannel
+import java.nio.file.OpenOption
+import java.nio.file.attribute.FileAttribute
 
 internal class FtpPath : ByteStringListPath<FtpPath>, Client.Path {
     private val fileSystem: FtpFileSystem
@@ -103,6 +106,20 @@ internal class FtpPath : ByteStringListPath<FtpPath>, Client.Path {
 
     override val remotePath: String
         get() = toString()
+
+    override fun newByteChannel(
+        options: Set<OpenOption>,
+        vararg attributes: FileAttribute<*>
+    ): FileChannel {
+        val isFtpTransfer = /* logic to determine if this is part of a FTP transfer */
+        // Increase buffer sizes for FileChannel operations
+        val bufferSize = if (isFtpTransfer) 64 * 1024 else 8 * 1024
+        
+        // Create a buffered channel
+        return super.newByteChannel(options, *attributes).let { channel ->
+            BufferedFileChannel(channel, bufferSize)
+        }
+    }
 
     private constructor(source: Parcel) : super(source) {
         fileSystem = source.readParcelable()!!
