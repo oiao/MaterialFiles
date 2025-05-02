@@ -33,9 +33,9 @@ class FtpServer(
                         port = this@FtpServer.port
                         // Performance optimizations
                         dataConnectionConfiguration = DataConnectionConfigurationFactory().apply {
-                            bufferSize = 1024 * 1024 // 1MB buffer for data connections
-                            activeLocalPort = port + 1 // Active mode port
-                            activeLocalPortRange = 10 // Allow a range of ports for active mode
+                            setBufferSize(1024 * 1024) // 1MB buffer for data connections
+                            setActiveLocalPort(port + 1) // Active mode port
+                            setActiveLocalPortRange(10) // Allow a range of ports for active mode
                         }.createDataConnectionConfiguration()
                     }
                     .createListener()
