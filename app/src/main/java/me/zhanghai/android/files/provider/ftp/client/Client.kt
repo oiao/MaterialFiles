@@ -87,8 +87,8 @@ object Client {
             
             // Performance optimizations
             bufferSize = 1024 * 1024 // 1MB buffer for improved transfer speed
-            sendBufferSize = 256 * 1024 // 256KB TCP send buffer
-            receiveBufferSize = 256 * 1024 // 256KB TCP receive buffer
+            setSendBufferSize(256 * 1024) // 256KB TCP send buffer
+            setReceiveBufferSize(256 * 1024) // 256KB TCP receive buffer
             
             connect(authority.host, authority.port)
             try {
