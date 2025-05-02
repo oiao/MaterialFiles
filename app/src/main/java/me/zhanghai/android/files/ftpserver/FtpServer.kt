@@ -13,7 +13,6 @@ import org.apache.ftpserver.ftplet.FtpException
 import org.apache.ftpserver.listener.ListenerFactory
 import org.apache.ftpserver.usermanager.impl.BaseUser
 import org.apache.ftpserver.usermanager.impl.WritePermission
-import org.apache.ftpserver.DataConnectionConfigurationFactory
 
 class FtpServer(
     private val username: String,
@@ -29,15 +28,7 @@ class FtpServer(
         server = FtpServerFactory()
             .apply {
                 val listener = ListenerFactory()
-                    .apply { 
-                        port = this@FtpServer.port
-                        // Performance optimizations
-                        dataConnectionConfiguration = DataConnectionConfigurationFactory().apply {
-                            setBufferSize(1024 * 1024) // 1MB buffer for data connections
-                            setActiveLocalPort(port + 1) // Active mode port
-                            setActiveLocalPortRange(10) // Allow a range of ports for active mode
-                        }.createDataConnectionConfiguration()
-                    }
+                    .apply { port = this@FtpServer.port }
                     .createListener()
                 addListener("default", listener)
                 val user = BaseUser().apply {
@@ -49,11 +40,7 @@ class FtpServer(
                 userManager.save(user)
                 fileSystem = ProviderFileSystemFactory()
                 connectionConfig = ConnectionConfigFactory()
-                    .apply { 
-                        isAnonymousLoginEnabled = true
-                        maxLoginFailures = 5
-                        loginFailureDelay = 2000
-                    }
+                    .apply { isAnonymousLoginEnabled = true }
                     .createConnectionConfig()
             }
             .createServer()
