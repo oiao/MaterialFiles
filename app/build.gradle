@@ -85,6 +85,11 @@ android {
             }
 //#endif
         }
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+            resValue "string", "app_name", "Material Files (Debug)"
+        }
     }
     packagingOptions {
         jniLibs {
