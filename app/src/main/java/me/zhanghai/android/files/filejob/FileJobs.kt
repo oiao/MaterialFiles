@@ -153,8 +153,8 @@ private fun FileJob.postNotification(
 }
 
 // Increase the progress interval to reduce overhead during transfers
-private const val PROGRESS_INTERVAL_MILLIS = 500L // Increased from default (likely 100ms)
-private const val NOTIFICATION_INTERVAL_MILLIS = 1000L 
+private const val PROGRESS_INTERVAL_MILLIS = 500L  // Changed from 150ms to 500ms for better performance
+private const val NOTIFICATION_INTERVAL_MILLIS = 500L
 
 private fun FileJob.showToast(textRes: Int, duration: Int = Toast.LENGTH_SHORT) {
     service.mainExecutorCompat.execute {

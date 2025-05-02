@@ -21,6 +21,9 @@ class FileByteChannel(
     isAppend: Boolean
 ) : AbstractFileByteChannel(isAppend, joinCancelledRead = true) {
     private val clientLock = Any()
+    
+    // Optimized buffer size for better performance
+    private val bufferSize = 262144 // 256KB
 
     @Throws(IOException::class)
     override fun onRead(position: Long, size: Int): ByteBuffer {

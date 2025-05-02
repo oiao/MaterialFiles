@@ -34,6 +34,14 @@ object Client {
         DateTimeFormatter.ofPattern("yyyyMMddHHmmss", Locale.ROOT)
             .withChronology(IsoChronology.INSTANCE)
             .withZone(ZoneOffset.UTC)
+            
+    // Optimized buffer sizes for better transfer performance
+    private const val OPTIMAL_BUFFER_SIZE = 262144 // 256KB buffer size
+    private const val CONNECTION_KEEP_ALIVE_SECONDS = 30
+    private const val SOCKET_TIMEOUT = 30000 // 30 seconds
+    
+    // Maximum number of idle connections to keep per host
+    private const val MAX_IDLE_CONNECTIONS = 5
 
     @Volatile
     lateinit var authenticator: Authenticator
@@ -84,6 +92,20 @@ object Client {
             // This has to be set before connect().
             controlEncoding = authority.encoding
             listHiddenFiles = true
+            
+            // Set optimized buffer sizes
+            bufferSize = OPTIMAL_BUFFER_SIZE
+            sendDataSocketBufferSize = OPTIMAL_BUFFER_SIZE
+            receiveDataSocketBufferSize = OPTIMAL_BUFFER_SIZE
+            
+            // Set timeouts for better performance
+            connectTimeout = SOCKET_TIMEOUT
+            controlKeepAliveTimeout = CONNECTION_KEEP_ALIVE_SECONDS.toLong()
+            controlKeepAliveReplyTimeout = SOCKET_TIMEOUT
+            
+            // Disable Nagle's algorithm to reduce latency
+            setTcpNoDelay(true)
+            
             connect(authority.host, authority.port)
             try {
                 if (!FTPReply.isPositiveCompletion(replyCode)) {
@@ -121,13 +143,16 @@ object Client {
             client.disconnect()
             return
         }
-        // FIXME: Disconnect clients based on time.
-        if (false) {
-            closeClient(client)
-            return
-        }
+        
         synchronized(clientPool) {
-            clientPool.getOrPut(authority) { mutableListOf() } += client
+            val pooledClients = clientPool.getOrPut(authority) { mutableListOf() }
+            // Limit the number of idle clients per authority
+            if (pooledClients.size >= MAX_IDLE_CONNECTIONS) {
+                // Close the oldest connection
+                val oldestClient = pooledClients.removeAt(0)
+                closeClient(oldestClient)
+            }
+            pooledClients.add(client)
         }
     }
 

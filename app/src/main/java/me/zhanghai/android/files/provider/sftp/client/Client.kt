@@ -18,27 +18,169 @@ import net.schmizz.sshj.sftp.Response
 import net.schmizz.sshj.sftp.SFTPClient
 import net.schmizz.sshj.sftp.SFTPException
 import net.schmizz.sshj.transport.TransportException
-import net.schmizz.sshj.transport.verification.PromiscuousVerifier
 import net.schmizz.sshj.userauth.UserAuthException
 import java.io.IOException
 import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import java8.nio.file.Path as Java8Path
+import java.nio.channels.AsynchronousCloseException
+import java.nio.channels.ClosedByInterruptException
 
 object Client {
+    // Optimized buffer sizes for faster transfer
+    private const val SFTP_BUFFER_SIZE = 262144 // 256KB
+    private const val MAX_IDLE_CONNECTIONS = 5
+    private const val CONNECTION_TIMEOUT_MILLIS = 30000L // 30 seconds
+
     @Volatile
     lateinit var authenticator: Authenticator
 
-    private val clients = mutableMapOf<Authority, SFTPClient>()
+    private class ClientConnection(
+        val client: SSHClient,
+        val sftpClient: SFTPClient,
+        var lastUsedTime: Long = System.currentTimeMillis()
+    )
 
-    private val directoryFileAttributesCache =
-        Collections.synchronizedMap(WeakHashMap<Path, FileAttributes>())
+    // Connection pooling for better performance with multiple transfers
+    private val clientPool = ConcurrentHashMap<Authority, MutableList<ClientConnection>>()
+    private val directoryFileAttributesCache = Collections.synchronizedMap(
+        WeakHashMap<Path, FileAttributes>()
+    )
+
+    @Throws(IOException::class)
+    private fun acquireClient(authority: Authority): Pair<SSHClient, SFTPClient> {
+        // Try to reuse an existing connection
+        val clientConnection = synchronized(clientPool) {
+            val connections = clientPool[authority]
+            if (connections != null && connections.isNotEmpty()) {
+                val connection = connections.removeAt(connections.size - 1)
+                if (connections.isEmpty()) {
+                    clientPool.remove(authority)
+                }
+                connection
+            } else null
+        }
+
+        if (clientConnection != null) {
+            try {
+                // Make sure the connection is still valid
+                if (clientConnection.client.isConnected && clientConnection.client.isAuthenticated) {
+                    clientConnection.lastUsedTime = System.currentTimeMillis()
+                    return clientConnection.client to clientConnection.sftpClient
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                try {
+                    clientConnection.sftpClient.close()
+                    clientConnection.client.close()
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                }
+            }
+        }
+
+        // Create a new connection
+        return createClient(authority)
+    }
+
+    @Throws(IOException::class)
+    private fun createClient(authority: Authority): Pair<SSHClient, SFTPClient> {
+        val authentication = authenticator.getAuthentication(authority)
+            ?: throw UserAuthException("No authentication found for $authority")
+        val client = SSHClient()
+        
+        // Configure client for optimal performance
+        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS
+        client.socket.soTimeout = CONNECTION_TIMEOUT_MILLIS.toInt()
+        
+        // Enable compression for better performance
+        client.useCompression()
+        
+        // Configure socket parameters for better performance
+        client.socket.receiveBufferSize = SFTP_BUFFER_SIZE
+        client.socket.sendBufferSize = SFTP_BUFFER_SIZE
+        client.socket.tcpNoDelay = true
+        
+        // Set timeout so we don't hang
+        client.setTimeout(CONNECTION_TIMEOUT_MILLIS)
+        client.connectTimeout = CONNECTION_TIMEOUT_MILLIS
+        
+        // Configure preferred faster ciphers
+        client.config.preferredCiphers = listOf(
+            "aes128-ctr", "aes192-ctr", "aes256-ctr" // Faster ciphers first
+        )
+        
+        try {
+            client.connect(authority.host, authority.port)
+            authentication.authenticate(client, authority)
+            if (!client.isAuthenticated) {
+                throw UserAuthException("Authentication failed for $authority")
+            }
+            client.timeout = (authority.connectTimeout ?: CONNECTION_TIMEOUT_MILLIS).toInt()
+            // Optimize SFTP configuration for better performance
+            val sftpClient = client.newSFTPClient()
+            sftpClient.sftpEngine.packetSize = SFTP_BUFFER_SIZE
+            return client to sftpClient
+        } catch (e: Exception) {
+            client.disconnect()
+            throw e
+        }
+    }
+
+    private fun releaseClient(
+        authority: Authority,
+        client: SSHClient,
+        sftpClient: SFTPClient
+    ) {
+        synchronized(clientPool) {
+            try {
+                if (!client.isConnected) {
+                    return
+                }
+                
+                val connections = clientPool.getOrPut(authority) { mutableListOf() }
+                // Limit the pool size per authority
+                if (connections.size >= MAX_IDLE_CONNECTIONS) {
+                    // Remove and close oldest connection
+                    val oldestConnection = connections.minByOrNull { it.lastUsedTime }
+                    if (oldestConnection != null) {
+                        connections.remove(oldestConnection)
+                        try {
+                            oldestConnection.sftpClient.close()
+                            oldestConnection.client.close()
+                        } catch (e: IOException) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+                connections.add(ClientConnection(client, sftpClient, System.currentTimeMillis()))
+            } catch (e: Exception) {
+                e.printStackTrace()
+                try {
+                    sftpClient.close()
+                    client.disconnect()
+                } catch (e2: Exception) {
+                    e2.printStackTrace()
+                }
+            }
+        }
+    }
+
+    private inline fun <R> useClient(authority: Authority, block: (SFTPClient) -> R): R {
+        val (client, sftpClient) = acquireClient(authority)
+        try {
+            return block(sftpClient)
+        } finally {
+            releaseClient(authority, client, sftpClient)
+        }
+    }
 
     @Throws(ClientException::class)
     fun access(path: Path, flags: Set<OpenMode>) {
-        val file = open(path, flags, FileAttributes.EMPTY)
         try {
-            file.close()
+            useClient(path.authority) { it.open(path.remotePath, flags, FileAttributes.EMPTY).close() }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -46,14 +188,13 @@ object Client {
 
     @Throws(ClientException::class)
     fun lstat(path: Path): FileAttributes {
-        val client = getClient(path.authority)
         synchronized(directoryFileAttributesCache) {
             directoryFileAttributesCache[path]?.let {
                 return it.also { directoryFileAttributesCache -= path }
             }
         }
         return try {
-            client.lstat(path.remotePath)
+            useClient(path.authority) { it.lstat(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -61,23 +202,12 @@ object Client {
 
     @Throws(ClientException::class)
     fun mkdir(path: Path, attributes: FileAttributes) {
-        val client = getClient(path.authority)
         try {
-            client.sftpEngine.makeDir(path.remotePath, attributes)
+            useClient(path.authority) { it.mkdir(path.remotePath, attributes) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
         LocalWatchService.onEntryCreated(path as Java8Path)
-    }
-
-    @Throws(ClientException::class)
-    private fun open(path: Path, flags: Set<OpenMode>, attributes: FileAttributes): RemoteFile {
-        val client = getClient(path.authority)
-        return try {
-            client.open(path.remotePath, flags, attributes)
-        } catch (e: IOException) {
-            throw ClientException(e)
-        }
     }
 
     @Throws(ClientException::class)
@@ -86,7 +216,11 @@ object Client {
         flags: Set<OpenMode>,
         attributes: FileAttributes
     ): SeekableByteChannel {
-        val file = open(path, flags, attributes)
+        val file = try {
+            useClient(path.authority) { it.open(path.remotePath, flags, attributes) }
+        } catch (e: IOException) {
+            throw ClientException(e)
+        }
         return NotifyEntryModifiedSeekableByteChannel(
             FileByteChannel(file, flags.contains(OpenMode.APPEND)), path as Java8Path
         )
@@ -94,9 +228,8 @@ object Client {
 
     @Throws(ClientException::class)
     fun readlink(path: Path): String {
-        val client = getClient(path.authority)
         return try {
-            client.readlink(path.remotePath)
+            useClient(path.authority) { it.readlink(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -104,9 +237,8 @@ object Client {
 
     @Throws(ClientException::class)
     fun realpath(path: Path): Path {
-        val client = getClient(path.authority)
         val realPath = try {
-            client.canonicalize(path.remotePath)
+            useClient(path.authority) { it.canonicalize(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -124,7 +256,6 @@ object Client {
         }
     }
 
-    // Note that unlike POSIX rename(), this won't overwrite an existing file.
     @Throws(ClientException::class)
     fun rename(path: Path, newPath: Path) {
         if (newPath.authority != path.authority) {
@@ -132,9 +263,8 @@ object Client {
                 SFTPException(Response.StatusCode.FAILURE, "Paths aren't on the same authority")
             )
         }
-        val client = getClient(path.authority)
         try {
-            client.rename(path.remotePath, newPath.remotePath)
+            useClient(path.authority) { it.rename(path.remotePath, newPath.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -146,9 +276,8 @@ object Client {
 
     @Throws(ClientException::class)
     fun rmdir(path: Path) {
-        val client = getClient(path.authority)
         try {
-            client.rmdir(path.remotePath)
+            useClient(path.authority) { it.rmdir(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -158,24 +287,20 @@ object Client {
 
     @Throws(ClientException::class)
     fun scandir(path: Path): List<Path> {
-        val client = getClient(path.authority)
         val files = try {
-            client.ls(path.remotePath)
+            useClient(path.authority) { it.ls(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
         return files.map { file ->
-            // The attributes here are from lstat().
-            // https://github.com/openssh/openssh-portable/blob/71241fc05db4bbb11bb29340b44b92e2575373d8/sftp-server.c#L1110
             path.resolve(file.name).also { directoryFileAttributesCache[it] = file.attributes }
         }
     }
 
     @Throws(ClientException::class)
     fun setstat(path: Path, attributes: FileAttributes) {
-        val client = getClient(path.authority)
         try {
-            client.setattr(path.remotePath, attributes)
+            useClient(path.authority) { it.setattr(path.remotePath, attributes) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -185,7 +310,6 @@ object Client {
 
     @Throws(ClientException::class)
     fun stat(path: Path): FileAttributes {
-        val client = getClient(path.authority)
         synchronized(directoryFileAttributesCache) {
             directoryFileAttributesCache[path]?.let {
                 if (it.type != FileMode.Type.SYMLINK) {
@@ -194,7 +318,7 @@ object Client {
             }
         }
         return try {
-            client.stat(path.remotePath)
+            useClient(path.authority) { it.stat(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -202,9 +326,8 @@ object Client {
 
     @Throws(ClientException::class)
     fun symlink(link: Path, target: String) {
-        val client = getClient(link.authority)
         try {
-            client.symlink(link.remotePath, target)
+            useClient(link.authority) { it.symlink(link.remotePath, target) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
@@ -213,50 +336,13 @@ object Client {
 
     @Throws(ClientException::class)
     fun unlink(path: Path) {
-        val client = getClient(path.authority)
         try {
-            client.rm(path.remotePath)
+            useClient(path.authority) { it.rm(path.remotePath) }
         } catch (e: IOException) {
             throw ClientException(e)
         }
         directoryFileAttributesCache -= path
         LocalWatchService.onEntryDeleted(path as Java8Path)
-    }
-
-    @Throws(ClientException::class)
-    private fun getClient(authority: Authority): SFTPClient {
-        synchronized(clients) {
-            var client = clients[authority]
-            if (client != null) {
-                if (client.sftpEngine.subsystem.isOpen) {
-                    return client
-                } else {
-                    client.closeSafe()
-                    clients -= authority
-                }
-            }
-            val authentication = authenticator.getAuthentication(authority)
-                ?: throw ClientException("No authentication found for $authority")
-            val sshClient = SSHClient().apply { addHostKeyVerifier(PromiscuousVerifier()) }
-            try {
-                sshClient.connect(authority.host, authority.port)
-            } catch (e: IOException) {
-                sshClient.closeSafe()
-                throw ClientException(e)
-            }
-            try {
-                sshClient.auth(authority.username, authentication.toAuthMethod())
-            } catch (e: UserAuthException) {
-                sshClient.closeSafe()
-                throw ClientException(e)
-            } catch (e: TransportException) {
-                sshClient.closeSafe()
-                throw ClientException(e)
-            }
-            client = sshClient.newSFTPClient()
-            clients[authority] = client
-            return client
-        }
     }
 
     interface Path {

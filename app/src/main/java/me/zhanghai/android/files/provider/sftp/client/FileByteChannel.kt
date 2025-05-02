@@ -27,9 +27,14 @@ class FileByteChannel(
     private val file: RemoteFile,
     isAppend: Boolean
 ) : AbstractFileByteChannel(isAppend) {
+    // Optimized buffer size for better transfer speed
+    private val optimalBufferSize = 262144 // 256KB
+    
     override fun onReadAsync(position: Long, size: Int, timeoutMillis: Long): Future<ByteBuffer> =
         try {
-            RemoteFileAccessor.asyncRead(file, position, size)
+            // Use optimized buffer size for reading
+            val readSize = size.coerceAtLeast(optimalBufferSize)
+            RemoteFileAccessor.asyncRead(file, position, readSize)
         } catch (e: IOException) {
             throw e.maybeToSpecificException()
         }
@@ -60,16 +65,47 @@ class FileByteChannel(
 
     @Throws(IOException::class)
     override fun onWrite(position: Long, source: ByteBuffer) {
-        // I don't think we are using native or read-only ByteBuffer, so just call array() here.
-        try {
-            file.write(
-                position, source.array(), source.arrayOffset() + source.position(),
-                source.remaining()
-            )
-        } catch (e: IOException) {
-            throw e.maybeToSpecificException()
+        // Write in optimally sized chunks if source is large enough
+        val remaining = source.remaining()
+        if (remaining > optimalBufferSize * 2) {
+            var currentPosition = position
+            val originalLimit = source.limit()
+            val originalPosition = source.position()
+            
+            try {
+                while (source.position() < originalLimit) {
+                    val chunkSize = (originalLimit - source.position()).coerceAtMost(optimalBufferSize)
+                    source.limit(source.position() + chunkSize)
+                    
+                    try {
+                        file.write(
+                            currentPosition, source.array(), source.arrayOffset() + source.position(),
+                            chunkSize
+                        )
+                    } catch (e: IOException) {
+                        throw e.maybeToSpecificException()
+                    }
+                    
+                    currentPosition += chunkSize
+                    source.position(source.position() + chunkSize)
+                }
+            } finally {
+                // Restore original position and limit if there's an exception
+                source.limit(originalLimit)
+                source.position(originalPosition + (currentPosition - position).toInt())
+            }
+        } else {
+            // For smaller writes, use the original implementation
+            try {
+                file.write(
+                    position, source.array(), source.arrayOffset() + source.position(),
+                    source.remaining()
+                )
+            } catch (e: IOException) {
+                throw e.maybeToSpecificException()
+            }
+            source.position(source.limit())
         }
-        source.position(source.limit())
     }
 
     @Throws(IOException::class)
@@ -83,7 +119,7 @@ class FileByteChannel(
 
     @Throws(IOException::class)
     override fun onSize(): Long =
-        try{
+        try {
             file.length()
         } catch (e: IOException) {
             throw e.maybeToSpecificException()
