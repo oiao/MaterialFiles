@@ -27,7 +27,9 @@ object CrashlyticsInitializer {
             // Please, don't spam.
             return
         }
-        FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
+        if (BuildConfig.BUILD_TYPE != "debug") {
+            FirebaseCrashlytics.getInstance().setCrashlyticsCollectionEnabled(true)
+        }
     }
 
     private fun verifyPackageName(): Boolean {
