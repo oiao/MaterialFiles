@@ -12,34 +12,21 @@ The terms used in this Privacy Policy have the same meanings as in our Terms and
 
 For a better experience, while using our Service, I may require you to provide us with certain personally identifiable information. The information that I request will be retained on your device and is not collected by me in any way.
 
-The app does use third party services that may collect information used to identify you.
-
-Link to privacy policy of third party service providers used by the app
-
-- [Google Play Services](https://policies.google.com/privacy)
-- [Google Analytics for Firebase](https://policies.google.com/privacy)
-- [Firebase Crashlytics](https://firebase.google.com/support/privacy)
+The app does not integrate any analytics, crash reporting, or advertising SDKs. No usage metrics or diagnostic reports are sent to external servers by default.
 
 ## Log Data
 
-I want to inform you that whenever you use my Service, in a case of an error in the app I collect data and information (through third party products) on your phone called Log Data. This Log Data may include information such as your device Internet Protocol (“IP”) address, device name, operating system version, the configuration of the app when utilizing my Service, the time and date of your use of the Service, and other statistics.
+I want to inform you that whenever you use my Service, no automatic transmission of crash or usage data takes place. If you choose to share logs for troubleshooting, they remain on your device until you manually export them.
 
 ## Cookies
 
 Cookies are files with a small amount of data that are commonly used as anonymous unique identifiers. These are sent to your browser from the websites that you visit and are stored on your device's internal memory.
 
-This Service does not use these “cookies” explicitly. However, the app may use third party code and libraries that use “cookies” to collect information and improve their services. You have the option to either accept or refuse these cookies and know when a cookie is being sent to your device. If you choose to refuse our cookies, you may not be able to use some portions of this Service.
+This Service does not use these “cookies” explicitly, and it does not bundle third party code that tracks users via cookies.
 
 ## Service Providers
 
-I may employ third-party companies and individuals due to the following reasons:
-
-- To facilitate our Service;
-- To provide the Service on our behalf;
-- To perform Service-related services; or
-- To assist us in analyzing how our Service is used.
-
-I want to inform users of this Service that these third parties have access to your Personal Information. The reason is to perform the tasks assigned to them on our behalf. However, they are obligated not to disclose or use the information for any other purpose.
+I do not employ third-party companies or individuals to process analytics or telemetry data on my behalf.
 
 ## Security
 
