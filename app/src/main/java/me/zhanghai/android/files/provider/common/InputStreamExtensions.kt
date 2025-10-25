@@ -17,7 +17,7 @@ fun InputStream.copyTo(
     intervalMillis: Long,
     listener: ((Long) -> Unit)?
 ) {
-    val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+    val buffer = ByteArray(BUFFER_SIZE)
     var lastProgressMillis = System.currentTimeMillis()
     var copiedSize = 0L
     while (true) {
@@ -37,6 +37,8 @@ fun InputStream.copyTo(
     }
     listener?.invoke(copiedSize)
 }
+
+private const val BUFFER_SIZE = 512 * 1024
 
 @Throws(IOException::class)
 fun InputStream.readFully(buffer: ByteArray, offset: Int, length: Int): Int {
