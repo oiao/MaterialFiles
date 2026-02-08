@@ -19,6 +19,8 @@ import me.zhanghai.android.files.app.appClassLoader
 import me.zhanghai.android.files.app.application
 import me.zhanghai.android.files.util.Base64
 import me.zhanghai.android.files.util.asBase64
+import me.zhanghai.android.files.util.decryptForPreferenceStorageIfNeeded
+import me.zhanghai.android.files.util.encryptForPreferenceStorage
 import me.zhanghai.android.files.util.getBoolean
 import me.zhanghai.android.files.util.getFloat
 import me.zhanghai.android.files.util.getInteger
@@ -31,10 +33,19 @@ class StringSettingLiveData(
     nameSuffix: String?,
     @StringRes keyRes: Int,
     keySuffix: String?,
-    @StringRes defaultValueRes: Int
+    @StringRes defaultValueRes: Int,
+    private val encrypted: Boolean = false
 ) : SettingLiveData<String>(nameSuffix, keyRes, keySuffix, defaultValueRes) {
     constructor(@StringRes keyRes: Int, @StringRes defaultValueRes: Int) : this(
-        null, keyRes, null, defaultValueRes
+        null, keyRes, null, defaultValueRes, false
+    )
+
+    constructor(
+        @StringRes keyRes: Int,
+        @StringRes defaultValueRes: Int,
+        encrypted: Boolean
+    ) : this(
+        null, keyRes, null, defaultValueRes, encrypted
     )
 
     init {
@@ -48,10 +59,14 @@ class StringSettingLiveData(
         sharedPreferences: SharedPreferences,
         key: String,
         defaultValue: String
-    ): String = sharedPreferences.getString(key, defaultValue)!!
+    ): String {
+        val value = sharedPreferences.getString(key, defaultValue)!!
+        return if (encrypted) value.decryptForPreferenceStorageIfNeeded() else value
+    }
 
     override fun putValue(sharedPreferences: SharedPreferences, key: String, value: String) {
-        sharedPreferences.edit { putString(key, value) }
+        val storedValue = if (encrypted) value.encryptForPreferenceStorage() else value
+        sharedPreferences.edit { putString(key, storedValue) }
     }
 }
 
@@ -304,7 +319,7 @@ class ParcelValueSettingLiveData<T>(
     }
 
     private fun Base64.toParcelValue(): T {
-        val bytes = toByteArray()
+        val bytes = toByteArray().decryptForPreferenceStorageIfNeeded()
         return Parcel.obtain().use { parcel ->
             parcel.unmarshall(bytes, 0, bytes.size)
             parcel.setDataPosition(0)
@@ -317,7 +332,7 @@ class ParcelValueSettingLiveData<T>(
         val bytes = Parcel.obtain().use { parcel ->
             parcel.writeValue(this)
             parcel.marshall()
-        }
+        }.encryptForPreferenceStorage()
         return bytes.toBase64()
     }
 }

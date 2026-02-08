@@ -9,13 +9,13 @@ import android.content.Intent
 import android.os.Bundle
 import java8.nio.file.Path
 import me.zhanghai.android.files.app.AppActivity
-import me.zhanghai.android.files.app.application
 import me.zhanghai.android.files.file.MimeType
 import me.zhanghai.android.files.file.asMimeTypeOrNull
 import me.zhanghai.android.files.file.fileProviderUri
 import me.zhanghai.android.files.filejob.FileJobService
 import me.zhanghai.android.files.provider.archive.isArchivePath
 import me.zhanghai.android.files.util.createViewIntent
+import me.zhanghai.android.files.util.createIntent
 import me.zhanghai.android.files.util.extraPath
 import me.zhanghai.android.files.util.startActivitySafe
 
@@ -44,11 +44,8 @@ class OpenFileActivity : AppActivity() {
     }
 
     companion object {
-        private const val ACTION_OPEN_FILE = "me.zhanghai.android.files.intent.action.OPEN_FILE"
-
         fun createIntent(path: Path, mimeType: MimeType): Intent =
-            Intent(ACTION_OPEN_FILE)
-                .setPackage(application.packageName)
+            OpenFileActivity::class.createIntent()
                 .setType(mimeType.value)
                 .apply { extraPath = path }
     }

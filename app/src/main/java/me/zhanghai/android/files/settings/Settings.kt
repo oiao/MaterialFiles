@@ -79,7 +79,7 @@ object Settings {
 
     val FTP_SERVER_PASSWORD: SettingLiveData<String> =
         StringSettingLiveData(
-            R.string.pref_key_ftp_server_password, R.string.pref_default_value_empty
+            R.string.pref_key_ftp_server_password, R.string.pref_default_value_empty, true
         )
 
     val FTP_SERVER_PORT: SettingLiveData<Int> =
