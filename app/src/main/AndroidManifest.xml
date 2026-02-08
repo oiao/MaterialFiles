@@ -41,10 +41,10 @@
       ~ TODO: Remove this attribute once Samsung respects the default value for it.
       -->
     <application
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:banner="@drawable/banner"
         android:enableOnBackInvokedCallback="true"
-        android:fullBackupContent="true"
+        android:fullBackupContent="false"
         android:icon="@mipmap/launcher_icon"
         android:label="@string/app_name"
         android:networkSecurityConfig="@xml/netework_security_config"
@@ -145,14 +145,8 @@
             android:name="me.zhanghai.android.files.filelist.OpenFileActivity"
             android:documentLaunchMode="always"
             android:excludeFromRecents="true"
-            android:exported="true"
-            android:theme="@style/Theme.MaterialFiles.Translucent">
-            <intent-filter>
-                <action android:name="me.zhanghai.android.files.intent.action.OPEN_FILE" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <data android:mimeType="*/*" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:theme="@style/Theme.MaterialFiles.Translucent" />
 
         <activity
             android:name="me.zhanghai.android.files.filelist.EditFileActivity"

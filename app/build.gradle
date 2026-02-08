@@ -62,7 +62,7 @@ android {
     buildTypes {
         debug {
             applicationIdSuffix '.debug'
-            resValue 'string', 'app_name', 'Material Files Debug'
+            resValue 'string', 'app_name', 'Files'
             if (hasCiSigningConfig) {
                 signingConfig signingConfigs.release
             }
