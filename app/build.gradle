@@ -9,6 +9,9 @@ apply plugin: 'kotlin-parcelize'
 
 apply from: '../signing.gradle'
 
+def hasCiSigningConfig = ['STORE_FILE', 'STORE_PASSWORD', 'KEY_ALIAS', 'KEY_PASSWORD']
+        .every { System.getenv(it) }
+
 android {
     namespace 'me.zhanghai.android.files'
     buildToolsVersion = '36.0.0'
@@ -24,8 +27,6 @@ android {
         versionName '1.7.4'
         resValue 'string', 'app_version', versionName + ' (' + versionCode + ')'
         buildConfigField 'String', 'FILE_PROVIDIER_AUTHORITY', 'APPLICATION_ID + ".file_provider"'
-        resValue 'string', 'app_provider_authority', applicationId + '.app_provider'
-        resValue 'string', 'file_provider_authority', applicationId + '.file_provider'
         externalNativeBuild {
             cmake {
                 arguments '-DANDROID_STL=none'
@@ -62,6 +63,9 @@ android {
         debug {
             applicationIdSuffix '.debug'
             resValue 'string', 'app_name', 'Material Files Debug'
+            if (hasCiSigningConfig) {
+                signingConfig signingConfigs.release
+            }
         }
         release {
             minifyEnabled true
@@ -93,6 +97,50 @@ repositories {
         url 'https://jitpack.io'
     }
 }
+
+def blockedTrackingDependencyGroups = [
+        'com.google.firebase',
+        'io.sentry',
+        'com.bugsnag',
+        'com.microsoft.appcenter',
+        'com.mixpanel.android',
+        'com.amplitude',
+        'com.segment.analytics.android',
+        'com.posthog',
+        'com.datadoghq',
+        'com.newrelic.agent.android',
+        'com.rudderstack.android.sdk',
+        'com.snowplowanalytics',
+        'org.matomo.sdk'
+]
+def blockedTrackingGoogleModules = [
+        'play-services-ads-identifier',
+        'play-services-measurement',
+        'play-services-measurement-api',
+        'play-services-measurement-base',
+        'play-services-measurement-impl',
+        'play-services-measurement-sdk',
+        'play-services-measurement-sdk-api'
+]
+
+configurations.configureEach {
+    blockedTrackingDependencyGroups.each { group ->
+        exclude group: group
+    }
+    blockedTrackingGoogleModules.each { module ->
+        exclude group: 'com.google.android.gms', module: module
+    }
+    resolutionStrategy.eachDependency { details ->
+        if (details.requested.group in blockedTrackingDependencyGroups
+                || (details.requested.group == 'com.google.android.gms'
+                    && details.requested.name in blockedTrackingGoogleModules)) {
+            throw new GradleException(
+                    "Tracking dependency blocked: ${details.requested.group}:${details.requested.name}"
+            )
+        }
+    }
+}
+
 dependencies {
     // We need https://github.com/bitfireAT/dav4jvm/commit/c1bc14348831bcdb00f3a6eec4859b81c7dc3728
     implementation('com.github.bitfireAT:dav4jvm:ec6264d427') {

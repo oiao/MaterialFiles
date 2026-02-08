@@ -380,12 +380,12 @@
 
         <provider
             android:name="me.zhanghai.android.files.app.AppProvider"
-            android:authorities="@string/app_provider_authority"
+            android:authorities="${applicationId}.app_provider"
             android:exported="false" />
 
         <provider
             android:name="me.zhanghai.android.files.file.FileProvider"
-            android:authorities="@string/file_provider_authority"
+            android:authorities="${applicationId}.file_provider"
             android:exported="false"
             android:grantUriPermissions="true" />
 
